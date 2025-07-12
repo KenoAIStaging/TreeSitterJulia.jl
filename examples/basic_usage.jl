@@ -22,21 +22,27 @@ for tok in tokens
     println("  $k -> :$ts_token ('$text')")
 end
 
-# Example 2: Operator precedence
+# Example 2: Operator precedence  
 println("\n2. Operator Precedence Mapping")
 println("-" ^ 20)
 
 using JuliaSyntax: PREC_PLUS, PREC_TIMES, PREC_POWER
 
-operators = [
-    (K"Operator", PREC_PLUS, "+"),
-    (K"Operator", PREC_TIMES, "*"),
-    (K"Operator", PREC_POWER, "^"),
-]
+# Show how operators get mapped based on their precedence
+operator_examples = ["+", "*", "^", "==", "->", "&&", "::", "."]
 
-for (kind, prec, op) in operators
-    ts_token = TreeSitterJulia.kind_to_ts_token(kind, prec)
-    println("  $op: $kind + $prec -> :$ts_token")
+for op in operator_examples
+    tokens = JuliaSyntax.tokenize(op)
+    if !isempty(tokens)
+        tok = first(tokens)
+        k = JuliaSyntax.kind(tok)
+        
+        # Determine precedence
+        prec = TreeSitterJulia.get_operator_precedence(op)
+        ts_token = TreeSitterJulia.kind_to_ts_token(k, prec)
+        
+        println("  '$op': $k + $prec -> :$ts_token")
+    end
 end
 
 # Example 3: Scanner lifecycle

@@ -1,5 +1,7 @@
 # Scanner implementation for tree-sitter external scanner
 
+include("lexer_adapter.jl")
+
 # Scanner state that persists across parsing
 mutable struct Scanner
     # State for context-sensitive lexing
@@ -10,11 +12,14 @@ mutable struct Scanner
     paren_depth::Int32
     bracket_depth::Int32
     brace_depth::Int32
+    # Last token info for context
+    last_token_kind::Kind
+    last_token_end_pos::Int
 end
 
 # Create a new scanner
 function Scanner()
-    Scanner(false, false, '"', 0, 0, 0, 0)
+    Scanner(false, false, '"', 0, 0, 0, 0, K"None", 0)
 end
 
 # External token types handled by the scanner
@@ -84,99 +89,78 @@ function deserialize_scanner(ptr::Ptr{Scanner}, buffer::Ptr{UInt8}, length::UInt
     end
 end
 
-# Main scanning function
+# Main scanning function using JuliaSyntax tokenizer
 function scan(ptr::Ptr{Scanner}, ts_lexer::Ptr{TSLexer}, valid_symbols::Ptr{Bool})::Bool
     scanner = unsafe_load(ptr)
     
-    # Skip whitespace except newlines
-    skip_whitespace!(ts_lexer)
+    # Use JuliaSyntax's tokenizer
+    token = lex_julia_token(ts_lexer)
     
-    if is_eof(ts_lexer)
+    if token === nothing
         return false
     end
     
-    c = peekchar_ts(ts_lexer)
+    # Update scanner state based on token
+    scanner.last_token_kind = token.kind
+    scanner.last_token_end_pos = token.endbyte
     
-    # Handle newlines
-    if c == '\n' && unsafe_load(valid_symbols, EXTERNAL_TOKENS[:NEWLINE] + 1)
-        advance!(ts_lexer)
-        mark_end!(ts_lexer)
-        set_result!(ts_lexer, :NEWLINE)
-        return true
+    # Update nesting depths
+    if token.kind == K"("
+        scanner.paren_depth += 1
+    elseif token.kind == K")"
+        scanner.paren_depth -= 1
+    elseif token.kind == K"["
+        scanner.bracket_depth += 1
+    elseif token.kind == K"]"
+        scanner.bracket_depth -= 1
+    elseif token.kind == K"{"
+        scanner.brace_depth += 1
+    elseif token.kind == K"}"
+        scanner.brace_depth -= 1
     end
     
-    # Handle comments
-    if c == '#' && unsafe_load(valid_symbols, EXTERNAL_TOKENS[:COMMENT] + 1)
-        advance!(ts_lexer)
-        
-        # Check for multiline comment #= ... =#
-        if peekchar_ts(ts_lexer) == '='
-            advance!(ts_lexer)
-            scanner.comment_depth = 1
-            
-            while scanner.comment_depth > 0 && !is_eof(ts_lexer)
-                c1 = readchar_ts!(ts_lexer)
-                
-                if c1 == '#' && peekchar_ts(ts_lexer) == '='
-                    advance!(ts_lexer)
-                    scanner.comment_depth += 1
-                elseif c1 == '=' && peekchar_ts(ts_lexer) == '#'
-                    advance!(ts_lexer)
-                    scanner.comment_depth -= 1
-                end
-            end
-            
-            if scanner.comment_depth > 0
-                # Unterminated multiline comment
-                return false
-            end
-        else
-            # Single-line comment
-            while !is_eof(ts_lexer) && peekchar_ts(ts_lexer) != '\n'
-                advance!(ts_lexer)
-            end
+    # Handle string state
+    if token.kind == K"\"" || token.kind == K"\"\"\""
+        scanner.in_string = !scanner.in_string
+        scanner.string_triple = (token.kind == K"\"\"\"")
+        scanner.string_delim_char = '"'
+    elseif token.kind == K"`" || token.kind == K"```"
+        scanner.in_string = !scanner.in_string
+        scanner.string_triple = (token.kind == K"```")
+        scanner.string_delim_char = '`'
+    end
+    
+    # Map to tree-sitter token, including operator precedence
+    ts_token = if token.kind == K"Operator"
+        kind_to_ts_token(token.kind, token.precedence)
+    else
+        kind_to_ts_token(token.kind)
+    end
+    
+    # Check if this token type is valid
+    token_id = get(TS_TOKEN_TO_ID, ts_token, nothing)
+    if token_id !== nothing && token_id < 256  # Assuming max 256 external tokens
+        if unsafe_load(valid_symbols, token_id + 1)
+            set_result!(ts_lexer, ts_token)
+            unsafe_store!(ptr, scanner)
+            return true
         end
-        
-        mark_end!(ts_lexer)
+    end
+    
+    # If the exact token isn't in external tokens, try mapping to external token categories
+    if token.kind == K"Comment" && unsafe_load(valid_symbols, EXTERNAL_TOKENS[:COMMENT] + 1)
         set_result!(ts_lexer, :COMMENT)
         unsafe_store!(ptr, scanner)
         return true
-    end
-    
-    # Handle string content (simplified for now)
-    if scanner.in_string && unsafe_load(valid_symbols, EXTERNAL_TOKENS[:STRING_CONTENT] + 1)
-        has_content = false
-        
-        while !is_eof(ts_lexer)
-            c = peekchar_ts(ts_lexer)
-            
-            if c == scanner.string_delim_char
-                if scanner.string_triple
-                    # Check for triple quotes (simplified)
-                    break
-                else
-                    break
-                end
-            elseif c == '\\'
-                advance!(ts_lexer)
-                has_content = true
-                if !is_eof(ts_lexer)
-                    advance!(ts_lexer)
-                end
-            elseif c == '\$'
-                # String interpolation
-                break
-            else
-                advance!(ts_lexer)
-                has_content = true
-            end
-        end
-        
-        if has_content
-            mark_end!(ts_lexer)
-            set_result!(ts_lexer, :STRING_CONTENT)
-            return true
-        end
+    elseif token.kind == K"NewlineWs" && unsafe_load(valid_symbols, EXTERNAL_TOKENS[:NEWLINE] + 1)
+        set_result!(ts_lexer, :NEWLINE)
+        unsafe_store!(ptr, scanner)
+        return true
+    elseif token.kind == K"String" && scanner.in_string && 
+           unsafe_load(valid_symbols, EXTERNAL_TOKENS[:STRING_CONTENT] + 1)
+        set_result!(ts_lexer, :STRING_CONTENT)
+        unsafe_store!(ptr, scanner)
+        return true
     end
     
     return false

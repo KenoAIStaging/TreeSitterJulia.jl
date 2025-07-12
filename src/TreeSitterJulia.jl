@@ -3,7 +3,8 @@ module TreeSitterJulia
 using JuliaSyntax
 
 # Export main functionality
-export create_scanner, destroy_scanner, serialize_scanner, deserialize_scanner, scan
+export create_scanner, destroy_scanner, serialize_scanner, deserialize_scanner, scan,
+       kind_to_ts_token, get_operator_precedence, generate_c_header
 
 # Include submodules
 include("tokens.jl")
