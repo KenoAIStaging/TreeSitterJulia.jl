@@ -1,0 +1,12 @@
+name = "TreeSitterJulia"
+uuid = "8a5c0b95-9f3a-4c8e-b8d2-7b3a5e8c9d4f"
+authors = ["KenoAIStaging"]
+version = "0.1.0"
+
+[deps]
+JuliaSyntax = "70703baa-626e-46a2-a12c-08ffd08c73b4"
+tree_sitter_jll = "695101d5-695a-40a2-8c75-695a3a695e69"
+
+[compat]
+JuliaSyntax = "0.4"
+julia = "1.6"

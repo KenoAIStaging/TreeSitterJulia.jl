@@ -1,0 +1,22 @@
+# Build artifacts
+build/
+*.so
+*.o
+*.dylib
+*.dll
+
+# Julia artifacts
+Manifest.toml
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+deps/deps.jl
+
+# Editor files
+.vscode/
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
